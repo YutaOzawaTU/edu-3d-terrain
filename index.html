@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>教育向け3D地形アプリ（MVPモック）</title>
+  <link rel="preconnect" href="https://unpkg.com" crossorigin>
+  <link rel="preconnect" href="https://api.maptiler.com" crossorigin>
+  <style>
+    :root { --accent: #2563eb; --bg: #0b1020; --panel: #11162a; --text: #e5e7eb; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; color: var(--text); background: var(--bg); }
+    .app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+    header, footer { background: var(--panel); border-bottom: 1px solid #1f2742; }
+    header { position: sticky; top: 0; z-index: 10; }
+    .bar { display: grid; grid-template-columns: 1fr auto auto auto; gap: .5rem; padding: .6rem .8rem; align-items: center; }
+    .search { display: flex; gap: .4rem; align-items: center; }
+    .search input { width: 100%; padding: .6rem .7rem; border: 1px solid #263256; border-radius: .6rem; background: #0e1430; color: var(--text); }
+    .btn { padding: .55rem .8rem; border: 1px solid #263256; background: #0e1430; color: var(--text); border-radius: .6rem; cursor: pointer; }
+    .btn:hover { border-color: #3351a6; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    .chip { display: inline-flex; gap: .4rem; align-items: center; padding: .35rem .6rem; border: 1px solid #263256; border-radius: 999px; background: #0e1430; cursor: pointer; }
+    .chip[aria-pressed="true"] { outline: 2px solid var(--accent); }
+    .panel { display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    #map { inline-size: 100%; block-size: 100%; }
+    .controls { display: grid; grid-template-columns: 1fr auto; gap: .8rem; padding: .6rem .8rem; background: linear-gradient(180deg, #0b1020 0%, #0b1020A0 100%); border-top: 1px solid #1f2742; }
+    .slider-row { display: grid; grid-template-columns: 10rem 1fr 4rem; gap: .8rem; align-items: center; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .watermark { position: absolute; right: .6rem; bottom: .6rem; background: #0009; color: #fff; font-size: .8rem; padding: .35rem .5rem; border-radius: .5rem; backdrop-filter: blur(2px); }
+    .wm-muted { opacity: .85; }
+    footer { padding: .6rem .8rem; font-size: .85rem; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #1f2742; }
+    a { color: #9cc2ff; }
+    .help { display: none; position: fixed; inset: 0; background: #000c; align-items: center; justify-content: center; }
+    .help .card { width: min(720px, 92vw); background: #0e1430; border: 1px solid #263256; border-radius: .8rem; padding: 1rem; }
+    .kbd { background: #0b1020; border: 1px solid #1f2742; border-radius: .4rem; padding: .1rem .35rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    @media (max-width: 720px) { .bar { grid-template-columns: 1fr; grid-auto-rows: auto; gap: .6rem; } }
+  </style>
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+</head>
+<body>
+  <div class="app" role="application" aria-label="教育向け3D地形アプリ モック">
+    <header>
+      <div class="bar">
+        <div class="search" role="search">
+          <label class="visually-hidden" for="q">地名または座標</label>
+          <input id="q" placeholder="例：富士山、阿蘇、長野市 / 35.3606,138.7274" aria-label="地名または緯度経度を入力" />
+          <button class="btn primary" id="go" aria-label="移動">Enter</button>
+        </div>
+        <div class="chips" aria-label="視点プリセット">
+          <button class="chip" id="v-top" aria-pressed="false">真上</button>
+          <button class="chip" id="v-oblique" aria-pressed="true">斜め</button>
+          <button class="chip" id="v-low" aria-pressed="false">低い角度</button>
+        </div>
+        <button class="btn" id="shot" aria-label="スクリーンショットを保存">スクショ</button>
+        <button class="btn" id="helpBtn" aria-haspopup="dialog" aria-controls="helpDlg">ヘルプ</button>
+      </div>
+    </header>
+
+    <main class="panel">
+      <div id="map" aria-label="3D地形ビュー"></div>
+      <div class="controls" aria-label="表示コントロール">
+        <div class="slider-row">
+          <label for="ze">起伏を強調（Z）</label>
+          <input id="ze" type="range" min="1" max="10" step="0.5" value="1" aria-valuemin="1" aria-valuemax="10" aria-valuenow="1" aria-label="起伏誇張" />
+          <output id="zeOut">1×</output>
+        </div>
+        <div style="display:flex; gap:.6rem; align-items:center;">
+          <button class="btn" id="share">共有URL</button>
+          <button class="btn" id="reset">1×に戻す</button>
+        </div>
+      </div>
+      <div class="watermark wm-muted" id="wm">出典：国土地理院 地理院タイル（標高タイル）｜この画像は地理院タイルを加工して作成</div>
+    </main>
+
+    <footer>
+      <div>
+        出典：<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noreferrer noopener">国土地理院 地理院タイル一覧</a>
+        ／ 「加工して作成」を自動明示
+      </div>
+      <div>
+        教材プリセット：<button class="btn" data-preset="fuji">富士山</button> <button class="btn" data-preset="aso">阿蘇</button> <button class="btn" data-preset="zenkoji">善光寺平</button>
+      </div>
+    </footer>
+  </div>
+
+  <div class="help" id="helpDlg" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="card">
+      <h2 id="helpTitle">30秒ツアー</h2>
+      <ol>
+        <li>検索欄に地名を入れて <span class="kbd">Enter</span> 。</li>
+        <li>下のスライダで <strong>起伏誇張</strong> を <em>1× → 3× → 10×</em> に。</li>
+        <li>「真上 / 斜め / 低い角度」で見え方を比べ、スクショを保存。</li>
+      </ol>
+      <p style="opacity:.8">※誇張は見やすくする手段です。実際の高さ比ではありません。</p>
+      <div style="display:flex; justify-content:flex-end; gap:.6rem; margin-top:.6rem;">
+        <button class="btn" id="helpClose">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+  <script>
+    // --- マップ初期化（※ここでは標準地図を背景にした“モック”。地形は後でraster-demを追加）
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: {
+        version: 8,
+        sources: {
+          gsi_std: {
+            type: 'raster',
+            tiles: [
+              'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png'
+            ],
+            tileSize: 256,
+            attribution: '© 国土地理院'
+          }
+        },
+        layers: [
+          { id: 'gsi-std', type: 'raster', source: 'gsi_std' }
+        ]
+      },
+      center: [138.7274, 35.3606], // 富士山
+      zoom: 9.5,
+      pitch: 60,
+      bearing: 30,
+      hash: false
+    });
+
+    // TODO: raster-dem（PNG標高）を追加 → map.setTerrain({source:'gsi_dem', exaggeration: ...})
+    // 参考：PNG標高のRGB→標高デコード、およびDEMタイルの提供は次ステップで実装。
+
+    // --- UIロジック（モック動作）
+    const ze = document.getElementById('ze');
+    const zeOut = document.getElementById('zeOut');
+    const resetBtn = document.getElementById('reset');
+    const shareBtn = document.getElementById('share');
+    const shotBtn = document.getElementById('shot');
+    const wm = document.getElementById('wm');
+
+    ze.addEventListener('input', () => {
+      zeOut.textContent = `${ze.value}×`;
+      ze.setAttribute('aria-valuenow', ze.value);
+      // 実装時：map.setTerrain({source:'gsi_dem', exaggeration: parseFloat(ze.value)});
+      wm.textContent = `出典：国土地理院 地理院タイル（標高タイル）｜この画像は地理院タイルを加工して作成｜起伏誇張：${ze.value}×`;
+    });
+
+    resetBtn.addEventListener('click', () => {
+      ze.value = 1; ze.dispatchEvent(new Event('input'));
+    });
+
+    // 視点プリセット
+    document.getElementById('v-top').addEventListener('click', () => { map.easeTo({ pitch: 0, bearing: 0, duration: 600 }); });
+    document.getElementById('v-oblique').addEventListener('click', () => { map.easeTo({ pitch: 60, bearing: 30, duration: 600 }); });
+    document.getElementById('v-low').addEventListener('click', () => { map.easeTo({ pitch: 80, bearing: 45, duration: 600 }); });
+
+    // プリセット地点（富士山・阿蘇・善光寺平）
+    document.querySelectorAll('button[data-preset]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-preset');
+        const presets = {
+          fuji:  { lng: 138.7274, lat: 35.3606, z: 9.5 },
+          aso:   { lng: 131.1035, lat: 32.8841, z: 10.8 },
+          zenkoji: { lng: 138.1810, lat: 36.6514, z: 11.0 }
+        };
+        const p = presets[id];
+        map.easeTo({ center: [p.lng, p.lat], zoom: p.z, duration: 900 });
+      });
+    });
+
+    // 共有URL（モック：現在のカメラと誇張値をクエリに反映）
+    function makeShareURL() {
+      const c = map.getCenter();
+      const query = new URLSearchParams({
+        c: `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`,
+        z: map.getZoom().toFixed(2),
+        p: map.getPitch().toFixed(1),
+        b: map.getBearing().toFixed(1),
+        ze: ze.value
+      });
+      return `${location.origin}${location.pathname}?${query.toString()}`;
+    }
+
+    shareBtn.addEventListener('click', async () => {
+      const url = makeShareURL();
+      try {
+        await navigator.clipboard.writeText(url);
+        shareBtn.textContent = 'URLをコピーしました';
+        setTimeout(() => (shareBtn.textContent = '共有URL'), 1200);
+      } catch (_) { alert(url); }
+    });
+
+    // スクリーンショット（モック：MapのキャンバスをPNG化、透かしは別要素を一時合成）
+    shotBtn.addEventListener('click', async () => {
+      const canvas = map.getCanvas();
+      const dataUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `terrain-snap_${Date.now()}.png`;
+      a.click();
+    });
+
+    // 検索（地名/座標）— MVPでは緯度経度の簡易パースに限定（地名検索は後でジオコーダ追加）
+    const q = document.getElementById('q');
+    document.getElementById('go').addEventListener('click', gotoQuery);
+    q.addEventListener('keydown', (e) => { if (e.key === 'Enter') gotoQuery(); });
+    function gotoQuery() {
+      const v = q.value.trim();
+      const m = v.match(/([-+]?\d+\.?\d*)\s*,\s*([-+]?\d+\.?\d*)/);
+      if (m) {
+        const lat = parseFloat(m[1]);
+        const lng = parseFloat(m[2]);
+        map.easeTo({ center: [lng, lat], duration: 900 });
+        return;
+      }
+      alert('緯度,経度 の形式で入力してください（地名検索は次ステップで実装）');
+    }
+
+    // ヘルプダイアログ
+    const help = document.getElementById('helpDlg');
+    document.getElementById('helpBtn').addEventListener('click', () => { help.style.display = 'flex'; });
+    document.getElementById('helpClose').addEventListener('click', () => { help.style.display = 'none'; });
+  </script>
+<script type="module">
+// --- gsidem:// プロトコル: GSI PNG標高(RGB) → Terrain-RGB 変換（MapLibre用）
+// 参考：GSI標高タイル仕様と変換実装の公開記事に基づく。
+// 標高=(R*256*256+G*256+B)*0.01（[128,0,0]=NoData, [128,0,1]以上は2^24を減算）
+// Terrain-RGB: val=round((elev+10000)*10); R=floor(val/65536); G=floor((val%65536)/256); B=val%256
+
+function decodeGsiElevation(r, g, b) {
+  if (r === 128 && g === 0 && b === 0) return null; // NoData
+  let n = r * 256 * 256 + g * 256 + b;
+  if (n >= 8388608) n -= 16777216; // 2^23, 2^24
+  return n * 0.01; // meters
+}
+function encodeTerrainRGB(elev) {
+  const e = Math.max(-10000, Math.min(9000, elev));
+  const val = Math.round((e + 10000) * 10);
+  const r = Math.floor(val / 65536);
+  const g = Math.floor((val - r * 65536) / 256);
+  const b = val - r * 65536 - g * 256;
+  return [r, g, b];
+}
+
+maplibregl.addProtocol('gsidem', (params, callback) => {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const w = img.width, h = img.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const elev = decodeGsiElevation(data[i], data[i+1], data[i+2]);
+      const [tr, tg, tb] = elev === null ? [0,0,0] : encodeTerrainRGB(elev);
+      data[i] = tr; data[i+1] = tg; data[i+2] = tb; // alphaは保持
+    }
+    ctx.putImageData(imageData, 0, 0);
+    canvas.toBlob(async (blob) => {
+      const arr = await blob.arrayBuffer();
+      callback(null, arr, null, null);
+    }, 'image/png');
+  };
+  img.onerror = () => callback(new Error('DEM tile load error'));
+  img.src = params.url.replace('gsidem://', '');
+  return { cancel: () => {} };
+});
+
+// 地形ソースを追加（誇張スライダと連動）
+const zeEl = document.getElementById('ze');
+function applyTerrainExaggeration() {
+  const ex = parseFloat(zeEl.value || '1');
+  if (window.map) map.setTerrain({ source: 'gsi_dem', exaggeration: ex });
+}
+map.on('load', () => {
+  map.addSource('gsi_dem', {
+    type: 'raster-dem',
+    tiles: [ 'gsidem://https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png' ],
+    tileSize: 256,
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html#dem" target="_blank" rel="noreferrer noopener">地理院タイル(標高タイル)</a>'
+  });
+  applyTerrainExaggeration();
+});
+zeEl.addEventListener('input', applyTerrainExaggeration);
+
+// GSI AddressSearch を使った地名検索（緯度,経度でなければAPIにフォールバック）
+async function geocodeGSI(q) {
+  const url = `https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(q)}`;
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) return null;
+  const js = await res.json();
+  if (!Array.isArray(js) || js.length === 0) return null;
+  const { geometry: { coordinates } } = js[0]; // [lon, lat]
+  return { lon: coordinates[0], lat: coordinates[1] };
+}
+async function gotoQueryExtended() {
+  const inp = document.getElementById('q');
+  const v = inp.value.trim();
+  const m = v.match(/([-+]?\\d+\\.?\\d*)\\s*,\\s*([-+]?\\d+\\.?\\d*)/);
+  if (m) {
+    const lat = parseFloat(m[1]);
+    const lng = parseFloat(m[2]);
+    map.easeTo({ center: [lng, lat], duration: 900 });
+    return;
+  }
+  const hit = await geocodeGSI(v);
+  if (hit) {
+    map.easeTo({ center: [hit.lon, hit.lat], duration: 900 });
+  } else {
+    alert('場所が見つかりませんでした。別の地名か、緯度,経度 形式で入力してください。');
+  }
+}
+document.getElementById('go').addEventListener('click', gotoQueryExtended);
+document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') gotoQueryExtended(); });
+</script>
+
+</body>
+</html>
